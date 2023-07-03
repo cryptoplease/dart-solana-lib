@@ -1,20 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nested/nested.dart';
+import 'package:provider/provider.dart';
 
 import '../../di.dart';
 import '../accounts/services/accounts_bloc.dart';
 import 'screens/app_lock_screen.dart';
 import 'services/app_lock_bloc.dart';
+import 'services/local_auth_repository.dart';
 
 class AppLockModule extends SingleChildStatelessWidget {
   const AppLockModule({super.key, super.child});
 
   @override
-  Widget buildWithChild(BuildContext context, Widget? child) => BlocProvider(
-        create: (_) => sl<AppLockBloc>()
-          ..add(const AppLockEvent.init())
-          ..add(const AppLockEvent.lock()),
+  Widget buildWithChild(BuildContext context, Widget? child) => MultiProvider(
+        providers: [
+          BlocProvider(
+            create: (_) => sl<AppLockBloc>()
+              ..add(const AppLockEvent.init())
+              ..add(const AppLockEvent.lock()),
+          ),
+          ChangeNotifierProvider<LocalAuthRepository>(
+            create: (context) => sl<LocalAuthRepository>(),
+          ),
+        ],
         child: _Content(child: child),
       );
 }
@@ -61,6 +70,7 @@ class _ContentState extends State<_Content>
       listener: (context, state) {
         if (state.account == null) {
           context.read<AppLockBloc>().add(const AppLockEvent.logout());
+          context.read<LocalAuthRepository>().clear();
         }
       },
       child: Stack(

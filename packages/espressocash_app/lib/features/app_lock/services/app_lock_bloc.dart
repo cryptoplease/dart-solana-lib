@@ -1,11 +1,11 @@
 import 'package:bloc_concurrency/bloc_concurrency.dart';
+import 'package:dfunc/dfunc.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:injectable/injectable.dart';
 
 part 'app_lock_bloc.freezed.dart';
-
 part 'app_lock_event.dart';
 part 'app_lock_state.dart';
 
@@ -53,8 +53,8 @@ class AppLockBloc extends Bloc<AppLockEvent, AppLockState> {
 
   Future<void> _onDisable(AppLockEventDisable event, _Emitter emit) async {
     if (state is! AppLockStateEnabled) return;
-    final pin = await _secureStorage.read(key: _key);
-    if (pin == event.pin) {
+
+    if (await _validate(event.mode)) {
       await _secureStorage.delete(key: _key);
       emit(const AppLockState.disabled());
     } else {
@@ -69,13 +69,18 @@ class AppLockBloc extends Bloc<AppLockEvent, AppLockState> {
 
   Future<void> _onUnlock(AppLockEventUnlock event, _Emitter emit) async {
     if (state is! AppLockStateLocked) return;
-    final pin = await _secureStorage.read(key: _key);
-    if (pin == event.pin) {
+
+    if (await _validate(event.mode)) {
       emit(const AppLockState.enabled(disableFailed: false));
     } else {
       emit(const AppLockState.locked(isRetrying: true));
     }
   }
+
+  Future<bool> _validate(AppUnlockMode mode) async => mode.when(
+        pin: (pin) async => pin == await _secureStorage.read(key: _key),
+        biometrics: T,
+      );
 }
 
 const _key = 'lock-key';

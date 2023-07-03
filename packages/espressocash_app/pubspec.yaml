@@ -48,6 +48,7 @@ dependencies:
   injectable: ^2.1.2
   intl: ^0.18.0
   json_annotation: ^4.4.0
+  local_auth: ^2.1.6
   localizely_sdk: ^2.5.1
   logging: ^1.1.0
   meta: ^1.7.0

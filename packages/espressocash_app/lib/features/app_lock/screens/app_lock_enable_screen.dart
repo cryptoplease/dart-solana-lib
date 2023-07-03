@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../../l10n/l10n.dart';
 import '../../../ui/back_button.dart';
 import '../../../ui/decorated_window/decorated_window.dart';
+import '../widgets/local_auth_wrapper.dart';
 import '../widgets/pin_input_display_widget.dart';
 import 'app_lock_setup_flow_screen.dart';
 
@@ -19,6 +20,7 @@ class AppLockEnableScreen extends StatefulWidget {
 class _AppLockEnableScreenState extends State<AppLockEnableScreen> {
   String? _firstPass;
   String? _secondPass;
+  bool _askForBiometrics = false;
 
   void _onComplete(String value) {
     if (_firstPass == null) {
@@ -26,8 +28,7 @@ class _AppLockEnableScreenState extends State<AppLockEnableScreen> {
     } else {
       setState(() => _secondPass = value);
       if (_firstPass == _secondPass) {
-        // ignore: avoid-non-null-assertion, cannot be null here
-        context.read<AppLockSetupRouter>().onEnableFinished(_firstPass!);
+        setState(() => _askForBiometrics = true);
       }
     }
   }
@@ -36,6 +37,13 @@ class _AppLockEnableScreenState extends State<AppLockEnableScreen> {
       ? context.l10n.enterPasscode
       : context.l10n.reEnterPasscode;
 
+  void _finish() {
+    final passCode = _firstPass;
+    if (passCode != null && _secondPass != null && passCode == _secondPass) {
+      context.read<AppLockSetupRouter>().onEnableFinished(passCode);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => DecoratedWindow(
         backButton: CpBackButton(
@@ -43,9 +51,14 @@ class _AppLockEnableScreenState extends State<AppLockEnableScreen> {
         ),
         hasLogo: true,
         backgroundStyle: BackgroundStyle.dark,
-        child: PinInputDisplayWidget(
-          message: _instructions,
-          onCompleted: _onComplete,
+        child: LocalAuthWrapper(
+          shouldUseLocalAuth: _askForBiometrics,
+          onLocalAuthComplete: _finish,
+          onLocalAuthFailed: _finish,
+          child: PinInputDisplayWidget(
+            message: _instructions,
+            onCompleted: _onComplete,
+          ),
         ),
       );
 }
