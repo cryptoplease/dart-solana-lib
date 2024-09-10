@@ -1,36 +1,37 @@
 import 'dart:async';
 
 import 'package:dfunc/dfunc.dart';
-import 'package:espressocash_api/espressocash_api.dart';
 import 'package:injectable/injectable.dart';
-import 'package:solana/encoder.dart';
 import 'package:solana/solana.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../../config.dart';
 import '../../accounts/auth_scope.dart';
 import '../../accounts/models/ec_wallet.dart';
 import '../../analytics/analytics_manager.dart';
+import '../../balances/services/refresh_balance.dart';
 import '../../currency/models/amount.dart';
+import '../../payments/create_direct_payment.dart';
 import '../../transactions/models/tx_results.dart';
 import '../../transactions/services/resign_tx.dart';
-import '../../transactions/services/tx_sender.dart';
+import '../../transactions/services/tx_durable_sender.dart';
 import '../data/repository.dart';
 import '../models/outgoing_direct_payment.dart';
 
 @Singleton(scope: authScope)
 class ODPService {
   ODPService(
-    this._client,
     this._repository,
-    this._txSender,
+    this._txDurableSender,
     this._analyticsManager,
+    this._createDirectPayment,
+    this._refreshBalance,
   );
 
-  final EspressoCashClient _client;
   final ODPRepository _repository;
-  final TxSender _txSender;
+  final TxDurableSender _txDurableSender;
   final AnalyticsManager _analyticsManager;
+  final CreateDirectPayment _createDirectPayment;
+  final RefreshBalance _refreshBalance;
 
   final Map<String, StreamSubscription<void>> _subscriptions = {};
 
@@ -87,20 +88,16 @@ class ODPService {
     required Ed25519HDPublicKey? reference,
   }) async {
     try {
-      final dto = CreateDirectPaymentRequestDto(
-        senderAccount: account.address,
-        receiverAccount: receiver.toBase58(),
-        referenceAccount: reference?.toBase58(),
+      final directPaymentResult = await _createDirectPayment(
+        aReceiver: receiver,
+        aSender: account.publicKey,
+        aReference: reference,
         amount: amount.value,
-        cluster: apiCluster,
+        commitment: Commitment.confirmed,
       );
-      final response = await _client.createDirectPayment(dto);
-      final tx = await response
-          .let((it) => it.transaction)
-          .let(SignedTx.decode)
-          .let((it) => it.resign(account));
+      final tx = await directPaymentResult.transaction.resign(account);
 
-      return ODPStatus.txCreated(tx, slot: response.slot);
+      return ODPStatus.txCreated(tx);
     } on Exception {
       return const ODPStatus.txFailure(
         reason: TxFailureReason.creatingFailure,
@@ -132,17 +129,16 @@ class ODPService {
       return payment;
     }
 
-    final tx = await _txSender.send(status.tx, minContextSlot: status.slot);
+    final tx = await _txDurableSender.send(status.tx);
 
     final ODPStatus? newStatus = tx.map(
-      sent: (_) => ODPStatus.txSent(
+      sent: (it) => ODPStatus.txSent(
         status.tx,
-        slot: status.slot,
+        signature: it.signature ?? '',
       ),
-      invalidBlockhash: (_) => const ODPStatus.txFailure(
-        reason: TxFailureReason.invalidBlockhashSending,
-      ),
-      failure: (it) => ODPStatus.txFailure(reason: it.reason),
+      invalidBlockhash: (_) => null,
+      failure: (it) =>
+          const ODPStatus.txFailure(reason: TxFailureReason.creatingFailure),
       networkError: (_) => null,
     );
 
@@ -154,20 +150,16 @@ class ODPService {
     if (status is! ODPStatusTxSent) {
       return payment;
     }
+    final tx = await _txDurableSender.wait(txId: status.signature);
 
-    final tx = await _txSender.wait(
-      status.tx,
-      minContextSlot: status.slot,
-      txType: 'OutgoingDirectPayment',
-    );
-
-    final ODPStatus? newStatus = tx.map(
-      success: (_) => ODPStatus.success(txId: status.tx.id),
+    final ODPStatus? newStatus = tx?.map(
+      success: (_) => ODPStatus.success(txId: status.signature),
       failure: (tx) => ODPStatus.txFailure(reason: tx.reason),
       networkError: (_) => null,
     );
 
     if (newStatus is ODPStatusSuccess) {
+      _refreshBalance();
       _analyticsManager.directPaymentSent(amount: payment.amount.decimal);
     }
 
